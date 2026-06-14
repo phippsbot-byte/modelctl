@@ -4,10 +4,11 @@ import argparse
 import json
 import sys
 
+from .bench_artifacts import write_bench_artifact
 from .ingest import ingest
 from .manifest import ManifestError, load_manifest
 from .ops import bench, cleanup_execute, cleanup_plan, doctor, preflight, smoke, soak, status, validate, watchdog
-from .registry import add_registry, list_registry, remove_registry, show_registry
+from .registry import add_registry, list_registry, remove_registry, show_registry, use_registry
 from .report import write_report
 from .runner import start, stop, wait_ready
 
@@ -53,6 +54,12 @@ def add_registry_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     p_reg_rm.add_argument("name")
     p_reg_rm.add_argument("--registry", default=None)
     p_reg_rm.add_argument("--missing-ok", action="store_true")
+    p_reg_use = reg.add_parser("use", help="Copy or symlink a registered manifest to a working path")
+    p_reg_use.add_argument("name")
+    p_reg_use.add_argument("--output", "-o", default="modelctl.toml")
+    p_reg_use.add_argument("--registry", default=None)
+    p_reg_use.add_argument("--overwrite", action="store_true")
+    p_reg_use.add_argument("--symlink", action="store_true")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -96,6 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument("--prompt-chars", type=parse_int_list, default=None, help="Comma-separated synthetic prompt sizes in characters")
     p_bench.add_argument("--repeats", type=int, default=1)
     p_bench.add_argument("--max-tokens", type=int, default=16)
+    p_bench.add_argument("--output", "-o", default=None, help="Write benchmark artifact to this path")
+    p_bench.add_argument("--format", choices=["json", "md"], default="json")
     p_watchdog = sub.add_parser("watchdog", help="Sample readiness/swap and optionally stop the model on breach")
     p_watchdog.add_argument("--max-swap-gib", type=float, default=None)
     p_watchdog.add_argument("--duration", type=float, default=0.0, help="Seconds to watch; 0 means one sample")
@@ -117,11 +126,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.registry_command == "list":
                 emit(list_registry(args.registry)); return 0
             if args.registry_command == "add":
-                emit(add_registry(args.source or args.manifest, name=args.name, registry_dir=args.registry, overwrite=args.overwrite)); return 0
+                result = add_registry(args.source or args.manifest, name=args.name, registry_dir=args.registry, overwrite=args.overwrite); emit(result); return 0 if result.get("ok") else 2
             if args.registry_command == "show":
                 result = show_registry(args.name, extra_dirs=args.registry, include_content=args.content); emit(result); return 0 if result.get("ok") else 2
             if args.registry_command == "remove":
                 result = remove_registry(args.name, registry_dir=args.registry, missing_ok=args.missing_ok); emit(result); return 0 if result.get("ok") else 2
+            if args.registry_command == "use":
+                result = use_registry(args.name, output=args.output, registry_dir=args.registry, overwrite=args.overwrite, symlink=args.symlink); emit(result); return 0 if result.get("ok") else 2
         if args.command == "ingest":
             result = ingest(args.endpoint, output=args.output, model_id=args.model_id, ident=args.ident, overwrite=args.overwrite); emit(result); return 0 if result.get("ok") else 2
         if args.command not in MANIFEST_COMMANDS:
@@ -149,7 +160,10 @@ def main(argv: list[str] | None = None) -> int:
             result = soak(manifest, count=args.count, delay_sec=args.delay, fail_fast=not args.no_fail_fast); emit(result); return 0 if result.get("ok") else 2
         if args.command == "bench":
             prompt_chars = args.prompt_chars or BENCH_PRESETS[args.preset]
-            result = bench(manifest, prompt_chars=prompt_chars, repeats=args.repeats, max_tokens=args.max_tokens); emit(result); return 0 if result.get("ok") else 2
+            result = bench(manifest, prompt_chars=prompt_chars, repeats=args.repeats, max_tokens=args.max_tokens)
+            artifact = write_bench_artifact(manifest, result, output=args.output, fmt=args.format)
+            emit(artifact if args.output else result)
+            return 0 if result.get("ok") else 2
         if args.command == "watchdog":
             result = watchdog(manifest, max_swap_gib=args.max_swap_gib, duration_sec=args.duration, interval_sec=args.interval, stop_on_breach=args.stop_on_breach); emit(result); return 0 if result.get("ok") else 2
         if args.command == "cleanup":

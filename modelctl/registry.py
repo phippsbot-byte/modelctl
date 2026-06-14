@@ -121,3 +121,30 @@ def remove_registry(name: str, registry_dir: str | None = None, missing_ok: bool
     path = Path(str(entry["path"]))
     path.unlink()
     return {"ok": True, "removed": True, "path": str(path), "name": path.stem}
+
+
+def use_registry(name: str, output: str = "modelctl.toml", registry_dir: str | None = None, overwrite: bool = False, symlink: bool = False) -> dict[str, Any]:
+    dirs = [selected_registry_dir(registry_dir)] if registry_dir else default_registry_dirs([])
+    entry = find_registry_entry(name, [str(d) for d in dirs])
+    if not entry:
+        return {"ok": False, "error": f"registry entry not found: {name}"}
+    if not entry.get("ok"):
+        return {"ok": False, "error": f"registry entry is invalid: {entry.get('error')}", "entry": entry}
+    source = Path(str(entry["path"])).resolve()
+    target = Path(output).expanduser()
+    if target.exists() or target.is_symlink():
+        if not overwrite:
+            return {"ok": False, "error": f"output exists: {target}; pass --overwrite", "output": str(target)}
+        if target.is_dir() and not target.is_symlink():
+            return {"ok": False, "error": f"output is a directory: {target}", "output": str(target)}
+        target.unlink()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if symlink:
+        target.symlink_to(source)
+        mode = "symlink"
+    else:
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        mode = "copy"
+    # Validate the materialized manifest, not just the registry copy.
+    materialized = load_manifest(target)
+    return {"ok": True, "mode": mode, "source": str(source), "output": str(target), "id": materialized.id, "model_id": materialized.model_id, "endpoint": materialized.endpoint}

@@ -28,12 +28,13 @@ modelctl ingest --endpoint http://127.0.0.1:8080/v1 --output modelctl.toml --ove
 
 modelctl validate
 modelctl registry add --source modelctl.toml --name my-model
+modelctl registry use my-model --output modelctl.toml --overwrite
 modelctl registry list
 modelctl preflight
 modelctl start --wait
 modelctl smoke
 modelctl soak --count 3
-modelctl bench --preset tiny
+modelctl bench --preset tiny --output bench.md --format md
 modelctl report --format md --output report.md
 modelctl doctor
 modelctl watchdog --max-swap-gib 4 --duration 0
@@ -93,7 +94,7 @@ safe = true
 - `validate` — parse manifest and print resolved summary.
 - `ingest --endpoint URL --output modelctl.toml` — generate a starter manifest from a running `/v1/models` endpoint.
 - `list` — convenience alias for `registry list`; scans `$MODELCTL_REGISTRY` plus `~/.config/modelctl/models`.
-- `registry add/list/show/remove` — manage durable manifest registry entries.
+- `registry add/list/show/remove/use` — manage durable manifest registry entries and materialize a registered manifest into a workspace.
 - `preflight` — check paths, exclusive ports, disk floor, and swap ceiling.
 - `start --wait` — start server in its own process group, write PID state, optionally wait for readiness.
 - `wait` — wait for readiness URL/model string.
@@ -102,7 +103,7 @@ safe = true
 - `report --format md --output report.md` — write JSON/Markdown model state reports.
 - `smoke` — run OpenAI-compatible `/chat/completions` exact-output smoke.
 - `soak --count N` — run repeated smoke tests with timing and swap sampling.
-- `bench --preset tiny|small|standard` — run synthetic prompt-size benchmarks and capture server timings when available.
+- `bench --preset tiny|small|standard --output bench.md --format md` — run synthetic prompt-size benchmarks and write artifacts.
 - `watchdog --max-swap-gib N` — sample readiness/swap and optionally stop the manifest process on breach.
 - `cleanup` — dry-run cleanup candidates.
 - `cleanup --execute` — delete only candidates marked `safe = true`.

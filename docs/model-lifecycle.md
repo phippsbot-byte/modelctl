@@ -26,11 +26,12 @@ Minimum useful gate:
 ```bash
 modelctl ingest --endpoint http://127.0.0.1:8080/v1 --output modelctl.toml --overwrite
 modelctl registry add --source modelctl.toml --name local-test
+modelctl registry use local-test --output modelctl.toml --overwrite
 modelctl preflight -m modelctl.toml
 modelctl start -m modelctl.toml --wait
 modelctl smoke -m modelctl.toml
 modelctl soak -m modelctl.toml --count 3
-modelctl bench -m modelctl.toml --preset tiny
+modelctl bench -m modelctl.toml --preset tiny --output bench.md --format md
 modelctl report -m modelctl.toml --format md --output report.md
 modelctl doctor -m modelctl.toml
 modelctl watchdog -m modelctl.toml --max-swap-gib 4 --duration 0

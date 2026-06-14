@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.0
+
+- Add `modelctl registry use NAME` to materialize a registered manifest into a working `modelctl.toml` by copy or symlink.
+- Add `modelctl bench --output PATH --format json|md` for shareable benchmark artifacts.
+- Fix `registry add` exit codes so duplicate entries fail with a non-zero status unless `--overwrite` is passed.
+- Build release distributions for upload with the GitHub release.
+
 ## v0.4.0
 
 - Add registry management: `modelctl registry add/list/show/remove`.
