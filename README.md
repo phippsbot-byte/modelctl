@@ -27,11 +27,14 @@ $EDITOR modelctl.toml
 modelctl ingest --endpoint http://127.0.0.1:8080/v1 --output modelctl.toml --overwrite
 
 modelctl validate
+modelctl registry add --source modelctl.toml --name my-model
+modelctl registry list
 modelctl preflight
 modelctl start --wait
 modelctl smoke
 modelctl soak --count 3
-modelctl bench --prompt-chars 128,1024 --repeats 1
+modelctl bench --preset tiny
+modelctl report --format md --output report.md
 modelctl doctor
 modelctl watchdog --max-swap-gib 4 --duration 0
 modelctl status
@@ -89,15 +92,17 @@ safe = true
 
 - `validate` — parse manifest and print resolved summary.
 - `ingest --endpoint URL --output modelctl.toml` — generate a starter manifest from a running `/v1/models` endpoint.
-- `list` — list manifests in registry directories; scans `$MODELCTL_REGISTRY` plus `~/.config/modelctl/models`.
+- `list` — convenience alias for `registry list`; scans `$MODELCTL_REGISTRY` plus `~/.config/modelctl/models`.
+- `registry add/list/show/remove` — manage durable manifest registry entries.
 - `preflight` — check paths, exclusive ports, disk floor, and swap ceiling.
 - `start --wait` — start server in its own process group, write PID state, optionally wait for readiness.
 - `wait` — wait for readiness URL/model string.
 - `status` — print PID/readiness/log/swap state.
 - `doctor` — run preflight/status/cleanup review and report stale PID/log/endpoint issues.
+- `report --format md --output report.md` — write JSON/Markdown model state reports.
 - `smoke` — run OpenAI-compatible `/chat/completions` exact-output smoke.
 - `soak --count N` — run repeated smoke tests with timing and swap sampling.
-- `bench --prompt-chars 128,1024` — run synthetic prompt-size benchmarks and capture server timings when available.
+- `bench --preset tiny|small|standard` — run synthetic prompt-size benchmarks and capture server timings when available.
 - `watchdog --max-swap-gib N` — sample readiness/swap and optionally stop the manifest process on breach.
 - `cleanup` — dry-run cleanup candidates.
 - `cleanup --execute` — delete only candidates marked `safe = true`.

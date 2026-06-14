@@ -7,10 +7,16 @@ import sys
 from .ingest import ingest
 from .manifest import ManifestError, load_manifest
 from .ops import bench, cleanup_execute, cleanup_plan, doctor, preflight, smoke, soak, status, validate, watchdog
-from .registry import list_registry
+from .registry import add_registry, list_registry, remove_registry, show_registry
+from .report import write_report
 from .runner import start, stop, wait_ready
 
-MANIFEST_COMMANDS = {"validate", "preflight", "start", "wait", "stop", "status", "smoke", "soak", "bench", "doctor", "watchdog", "cleanup"}
+MANIFEST_COMMANDS = {"validate", "preflight", "start", "wait", "stop", "status", "smoke", "soak", "bench", "doctor", "watchdog", "report", "cleanup"}
+BENCH_PRESETS = {
+    "tiny": [128],
+    "small": [128, 512, 1024],
+    "standard": [128, 512, 1024, 2048, 4096],
+}
 
 
 def emit(obj) -> None:
@@ -29,6 +35,26 @@ def parse_int_list(value: str) -> list[int]:
     return items
 
 
+def add_registry_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    p_registry = sub.add_parser("registry", help="Manage the manifest registry")
+    reg = p_registry.add_subparsers(dest="registry_command", required=True)
+    p_reg_list = reg.add_parser("list", help="List registered manifests")
+    p_reg_list.add_argument("--registry", action="append", default=[], help="Extra registry directory to scan; can be repeated")
+    p_reg_add = reg.add_parser("add", help="Copy a manifest into the registry")
+    p_reg_add.add_argument("--source", default=None, help="Manifest path; defaults to global --manifest")
+    p_reg_add.add_argument("--name", default=None, help="Registry entry name; defaults to manifest id")
+    p_reg_add.add_argument("--registry", default=None, help="Registry directory to write to")
+    p_reg_add.add_argument("--overwrite", action="store_true")
+    p_reg_show = reg.add_parser("show", help="Show one registered manifest")
+    p_reg_show.add_argument("name")
+    p_reg_show.add_argument("--registry", action="append", default=[])
+    p_reg_show.add_argument("--content", action="store_true", help="Include manifest content")
+    p_reg_rm = reg.add_parser("remove", help="Remove one registered manifest")
+    p_reg_rm.add_argument("name")
+    p_reg_rm.add_argument("--registry", default=None)
+    p_reg_rm.add_argument("--missing-ok", action="store_true")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="modelctl", description="Manifest-driven lifecycle control for local LLM servers.")
     parser.add_argument("-m", "--manifest", default="modelctl.toml", help="Path to model manifest TOML")
@@ -37,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("preflight", help="Run required path, port, disk, and swap checks")
     p_list = sub.add_parser("list", help="List manifests in registry directories")
     p_list.add_argument("--registry", action="append", default=[], help="Extra registry directory to scan; can be repeated")
+    add_registry_parser(sub)
     p_ingest = sub.add_parser("ingest", help="Generate a starter manifest from an OpenAI-compatible /v1 endpoint")
     p_ingest.add_argument("--endpoint", required=True, help="Endpoint base URL, e.g. http://127.0.0.1:8080/v1")
     p_ingest.add_argument("--output", "-o", default=None, help="Write manifest to this path; omit to print manifest JSON payload")
@@ -51,6 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_stop.add_argument("--timeout", type=int, default=10, help="Grace period before SIGKILL")
     sub.add_parser("status", help="Print process/readiness status")
     sub.add_parser("doctor", help="Run preflight, status, cleanup review, and stale-state diagnostics")
+    p_report = sub.add_parser("report", help="Write a JSON or markdown model state report")
+    p_report.add_argument("--output", "-o", default=None)
+    p_report.add_argument("--format", choices=["json", "md"], default="json")
+    p_report.add_argument("--include-smoke", action="store_true", help="Run and include smoke test result")
     p_smoke = sub.add_parser("smoke", help="Run OpenAI-compatible chat completion smoke")
     p_smoke.add_argument("--prompt", default=None)
     p_smoke.add_argument("--expect", default=None)
@@ -61,7 +92,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_soak.add_argument("--delay", type=float, default=0.0, help="Delay between runs in seconds")
     p_soak.add_argument("--no-fail-fast", action="store_true", help="Continue after a failed run")
     p_bench = sub.add_parser("bench", help="Run synthetic prompt-size benchmarks with timing and swap sampling")
-    p_bench.add_argument("--prompt-chars", type=parse_int_list, default=[128, 1024], help="Comma-separated synthetic prompt sizes in characters")
+    p_bench.add_argument("--preset", choices=sorted(BENCH_PRESETS), default="small", help="Prompt-size preset; ignored when --prompt-chars is set")
+    p_bench.add_argument("--prompt-chars", type=parse_int_list, default=None, help="Comma-separated synthetic prompt sizes in characters")
     p_bench.add_argument("--repeats", type=int, default=1)
     p_bench.add_argument("--max-tokens", type=int, default=16)
     p_watchdog = sub.add_parser("watchdog", help="Sample readiness/swap and optionally stop the model on breach")
@@ -81,6 +113,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "list":
             emit(list_registry(args.registry)); return 0
+        if args.command == "registry":
+            if args.registry_command == "list":
+                emit(list_registry(args.registry)); return 0
+            if args.registry_command == "add":
+                emit(add_registry(args.source or args.manifest, name=args.name, registry_dir=args.registry, overwrite=args.overwrite)); return 0
+            if args.registry_command == "show":
+                result = show_registry(args.name, extra_dirs=args.registry, include_content=args.content); emit(result); return 0 if result.get("ok") else 2
+            if args.registry_command == "remove":
+                result = remove_registry(args.name, registry_dir=args.registry, missing_ok=args.missing_ok); emit(result); return 0 if result.get("ok") else 2
         if args.command == "ingest":
             result = ingest(args.endpoint, output=args.output, model_id=args.model_id, ident=args.ident, overwrite=args.overwrite); emit(result); return 0 if result.get("ok") else 2
         if args.command not in MANIFEST_COMMANDS:
@@ -100,12 +141,15 @@ def main(argv: list[str] | None = None) -> int:
             emit(status(manifest)); return 0
         if args.command == "doctor":
             result = doctor(manifest); emit(result); return 0 if result.get("ok") else 2
+        if args.command == "report":
+            result = write_report(manifest, output=args.output, fmt=args.format, include_smoke=args.include_smoke); emit(result); return 0 if result.get("ok") else 2
         if args.command == "smoke":
             result = smoke(manifest, prompt=args.prompt, expect=args.expect, max_tokens=args.max_tokens, temperature=args.temperature); emit(result); return 0 if result.get("ok") else 2
         if args.command == "soak":
             result = soak(manifest, count=args.count, delay_sec=args.delay, fail_fast=not args.no_fail_fast); emit(result); return 0 if result.get("ok") else 2
         if args.command == "bench":
-            result = bench(manifest, prompt_chars=args.prompt_chars, repeats=args.repeats, max_tokens=args.max_tokens); emit(result); return 0 if result.get("ok") else 2
+            prompt_chars = args.prompt_chars or BENCH_PRESETS[args.preset]
+            result = bench(manifest, prompt_chars=prompt_chars, repeats=args.repeats, max_tokens=args.max_tokens); emit(result); return 0 if result.get("ok") else 2
         if args.command == "watchdog":
             result = watchdog(manifest, max_swap_gib=args.max_swap_gib, duration_sec=args.duration, interval_sec=args.interval, stop_on_breach=args.stop_on_breach); emit(result); return 0 if result.get("ok") else 2
         if args.command == "cleanup":

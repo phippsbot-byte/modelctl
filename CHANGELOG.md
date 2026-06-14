@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.0
+
+- Add registry management: `modelctl registry add/list/show/remove`.
+- Add `modelctl report` for JSON/Markdown model state artifacts.
+- Add `modelctl bench --preset tiny|small|standard` while keeping explicit `--prompt-chars` overrides.
+- Keep top-level `modelctl list` as a registry-list convenience alias.
+
 ## v0.3.0
 
 - Add `modelctl ingest` to generate a starter manifest from a running OpenAI-compatible `/v1` endpoint.

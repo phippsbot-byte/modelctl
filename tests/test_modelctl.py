@@ -166,6 +166,12 @@ class ModelCtlTests(unittest.TestCase):
             self.assertEqual(watchdog.returncode, 0, watchdog.stderr + watchdog.stdout)
             watchdog_body = json.loads(watchdog.stdout)
             self.assertTrue(watchdog_body["ok"], watchdog_body)
+            report_path = root / "report.json"
+            report = subprocess.run(cmd + ["report", "--output", str(report_path)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(report.returncode, 0, report.stderr + report.stdout)
+            self.assertTrue(report_path.exists())
+            report_body = json.loads(report_path.read_text())
+            self.assertTrue(report_body["ok"], report_body)
             ingested = root / "ingested.toml"
             ingest = subprocess.run([sys.executable, "-m", "modelctl.cli", "ingest", "--endpoint", f"http://127.0.0.1:{port}/v1", "--output", str(ingested)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(ingest.returncode, 0, ingest.stderr + ingest.stdout)
@@ -185,13 +191,25 @@ class ModelCtlTests(unittest.TestCase):
                 model_id = "registered-model"
                 endpoint = "http://127.0.0.1:9/v1"
             ''')
-            manifest_path.rename(registry / "registered.toml")
+            source = registry / "registered.toml"
+            manifest_path.rename(source)
             cmd = [sys.executable, "-m", "modelctl.cli", "list", "--registry", str(registry)]
             result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             body = json.loads(result.stdout)
             self.assertEqual(body["count"], 1)
             self.assertEqual(body["entries"][0]["id"], "registered")
+            managed = root / "managed"
+            add = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "add", "--source", str(source), "--name", "managed-model", "--registry", str(managed)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(add.returncode, 0, add.stderr + add.stdout)
+            show = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "show", "managed-model", "--registry", str(managed), "--content"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(show.returncode, 0, show.stderr + show.stdout)
+            show_body = json.loads(show.stdout)
+            self.assertTrue(show_body["ok"], show_body)
+            self.assertIn("content", show_body["entry"])
+            rm = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "remove", "managed-model", "--registry", str(managed)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(rm.returncode, 0, rm.stderr + rm.stdout)
+            self.assertFalse((managed / "managed-model.toml").exists())
 
 
 if __name__ == "__main__":
