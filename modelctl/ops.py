@@ -7,7 +7,7 @@ import time
 
 from .http import http_json
 from .manifest import ModelManifest
-from .runner import active_pid, default_log_path, default_pid_path, readiness_check, read_pid_state, stop
+from .runner import active_pid, default_log_path, default_pid_path, readiness_check, read_pid_state, start as start_model, stop
 from .system import disk_free_gib, human_bytes, path_size_bytes, port_is_free, swap_used_gib
 
 
@@ -304,3 +304,33 @@ def watchdog(manifest: ModelManifest, max_swap_gib: float | None = None, duratio
             break
         time.sleep(max(0.1, interval_sec))
     return {"ok": not breached, "breached": breached, "max_swap_gib": max_swap_gib, "duration_sec": duration_sec, "interval_sec": interval_sec, "stop_on_breach": stop_on_breach, "stop_result": stop_result, "samples": samples}
+
+
+def daemon(manifest: ModelManifest, max_swap_gib: float | None = None, interval_sec: float = 30.0, iterations: int | None = None, restart: bool = False, wait: bool = True) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    index = 0
+    ok = True
+    while True:
+        index += 1
+        sample = watchdog(manifest, max_swap_gib=max_swap_gib, duration_sec=0, interval_sec=interval_sec, stop_on_breach=False)
+        first = sample["samples"][0] if sample.get("samples") else {}
+        breached = bool(sample.get("breached"))
+        action: dict[str, Any] | None = None
+        if breached:
+            ok = False
+            if restart:
+                if manifest.start is None:
+                    action = {"type": "restart_skipped", "reason": "manifest_has_no_start"}
+                else:
+                    stopped = stop(manifest)
+                    started = start_model(manifest, wait=wait)
+                    action = {"type": "restart", "stop": stopped, "start": started}
+                    # If restart restored readiness, keep the daemon result green.
+                    readiness = started.get("readiness") if isinstance(started, dict) else None
+                    if isinstance(readiness, dict) and readiness.get("ready"):
+                        ok = True
+        rows.append({"index": index, "time": first.get("time"), "breached": breached, "sample": first, "action": action})
+        if iterations is not None and index >= iterations:
+            break
+        time.sleep(max(0.1, interval_sec))
+    return {"ok": ok, "iterations_requested": iterations, "iterations_completed": len(rows), "restart": restart, "max_swap_gib": max_swap_gib, "interval_sec": interval_sec, "iterations": rows}

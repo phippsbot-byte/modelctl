@@ -40,6 +40,7 @@ modelctl report -m modelctl.toml --format md --output report.md
 modelctl -m modelctl.toml reports save --format json
 modelctl reports list
 modelctl doctor -m modelctl.toml --fix
+modelctl daemon -m modelctl.toml --iterations 1 --max-swap-gib 4
 modelctl watchdog -m modelctl.toml --max-swap-gib 4 --duration 0
 modelctl status -m modelctl.toml
 ```

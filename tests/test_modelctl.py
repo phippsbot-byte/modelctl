@@ -174,6 +174,12 @@ class ModelCtlTests(unittest.TestCase):
             self.assertEqual(watchdog.returncode, 0, watchdog.stderr + watchdog.stdout)
             watchdog_body = json.loads(watchdog.stdout)
             self.assertTrue(watchdog_body["ok"], watchdog_body)
+            daemon = subprocess.run(cmd + ["daemon", "--iterations", "1", "--interval", "0", "--max-swap-gib", "999999"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(daemon.returncode, 0, daemon.stderr + daemon.stdout)
+            daemon_body = json.loads(daemon.stdout)
+            self.assertTrue(daemon_body["ok"], daemon_body)
+            self.assertEqual(len(daemon_body["iterations"]), 1)
+            self.assertTrue(daemon_body["iterations"][0]["sample"]["ready"])
             report_path = root / "report.json"
             report = subprocess.run(cmd + ["report", "--output", str(report_path)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(report.returncode, 0, report.stderr + report.stdout)

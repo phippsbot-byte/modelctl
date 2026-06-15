@@ -8,7 +8,7 @@ It is built for messy real local inference work: `llama.cpp`, MLX/oMLX, custom m
 
 ```bash
 python3.11 -m pip install \
-  https://github.com/phippsbot-byte/modelctl/releases/download/v0.7.0/local_modelctl-0.7.0-py3-none-any.whl
+  https://github.com/phippsbot-byte/modelctl/releases/download/v0.8.0/local_modelctl-0.8.0-py3-none-any.whl
 ```
 
 For local development:
@@ -52,6 +52,7 @@ modelctl report --format md --output report.md
 modelctl reports save --format json
 modelctl reports list
 modelctl doctor --fix
+modelctl daemon --iterations 1 --max-swap-gib 4
 modelctl watchdog --max-swap-gib 4 --duration 0
 modelctl status
 modelctl cleanup          # dry-run
@@ -123,6 +124,7 @@ safe = true
 - `soak --count N` — run repeated smoke tests with timing and swap sampling.
 - `bench --preset tiny|small|standard --output bench.md --format md` — run synthetic prompt-size benchmarks and write artifacts.
 - `watchdog --max-swap-gib N` — sample readiness/swap and optionally stop the manifest process on breach.
+- `daemon --max-swap-gib N [--restart]` — run a foreground supervisor loop; restart is explicit only.
 - `cleanup` — dry-run cleanup candidates.
 - `cleanup --execute` — delete only candidates marked `safe = true`.
 - `cleanup --execute --force` — delete unsafe candidates too. Sharp knife; don't juggle it.

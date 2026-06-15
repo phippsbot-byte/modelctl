@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.0
+
+- Add `modelctl daemon`, a foreground readiness/swap supervisor loop.
+- Support bounded runs with `--iterations` for scripts/tests and continuous operation when omitted.
+- Support explicit `--restart` on breach for manifests with `[start]`; restart is opt-in, not a footgun default.
+
 ## v0.7.0
 
 - Add `modelctl doctor --fix` for safe local repairs: stale/invalid PID-state removal and state directory creation.

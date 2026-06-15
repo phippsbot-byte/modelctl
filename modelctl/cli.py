@@ -8,7 +8,7 @@ from .bench_artifacts import write_bench_artifact
 from .init import init_manifest
 from .ingest import ingest
 from .manifest import ManifestError, load_manifest
-from .ops import bench, cleanup_execute, cleanup_plan, doctor, doctor_fix, preflight, smoke, soak, status, validate, watchdog
+from .ops import bench, cleanup_execute, cleanup_plan, daemon, doctor, doctor_fix, preflight, smoke, soak, status, validate, watchdog
 from .registry import add_registry, list_registry, remove_registry, show_registry, use_registry
 from .report import write_report
 from .report_store import list_reports, save_report, show_report
@@ -17,7 +17,7 @@ from . import __version__
 
 PRETTY = False
 
-MANIFEST_COMMANDS = {"validate", "preflight", "start", "wait", "stop", "status", "smoke", "soak", "bench", "doctor", "watchdog", "report", "cleanup"}
+MANIFEST_COMMANDS = {"validate", "preflight", "start", "wait", "stop", "status", "smoke", "soak", "bench", "doctor", "watchdog", "daemon", "report", "cleanup"}
 BENCH_PRESETS = {
     "tiny": [128],
     "small": [128, 512, 1024],
@@ -177,6 +177,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_watchdog.add_argument("--duration", type=float, default=0.0, help="Seconds to watch; 0 means one sample")
     p_watchdog.add_argument("--interval", type=float, default=10.0, help="Seconds between samples")
     p_watchdog.add_argument("--stop-on-breach", action="store_true")
+    p_daemon = sub.add_parser("daemon", help="Run a foreground readiness/swap supervisor loop")
+    p_daemon.add_argument("--max-swap-gib", type=float, default=None)
+    p_daemon.add_argument("--interval", type=float, default=30.0, help="Seconds between supervisor samples")
+    p_daemon.add_argument("--iterations", type=int, default=None, help="Stop after N samples; omit to run until interrupted")
+    p_daemon.add_argument("--restart", action="store_true", help="On breach, stop/start the configured manifest process. Explicit for a reason.")
+    p_daemon.add_argument("--no-wait", action="store_true", help="Do not wait for readiness after an explicit restart")
     p_cleanup = sub.add_parser("cleanup", help="Plan or execute cleanup candidates")
     p_cleanup.add_argument("--execute", action="store_true", help="Actually delete safe cleanup candidates")
     p_cleanup.add_argument("--force", action="store_true", help="Allow deleting unsafe cleanup candidates too")
@@ -247,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result.get("ok") else 2
         if args.command == "watchdog":
             result = watchdog(manifest, max_swap_gib=args.max_swap_gib, duration_sec=args.duration, interval_sec=args.interval, stop_on_breach=args.stop_on_breach); emit(result); return 0 if result.get("ok") else 2
+        if args.command == "daemon":
+            result = daemon(manifest, max_swap_gib=args.max_swap_gib, interval_sec=args.interval, iterations=args.iterations, restart=args.restart, wait=not args.no_wait); emit(result); return 0 if result.get("ok") else 2
         if args.command == "cleanup":
             emit(cleanup_execute(manifest, force=args.force) if args.execute else cleanup_plan(manifest)); return 0
     except ManifestError as exc:
