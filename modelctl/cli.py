@@ -9,7 +9,7 @@ from .init import init_manifest
 from .ingest import ingest
 from .manifest import ManifestError, load_manifest
 from .mlx import create_overlay, discover_mlx_models, inspect_mlx_model, write_mlx_manifest
-from .ops import bench, cleanup_execute, cleanup_plan, daemon, doctor, doctor_fix, preflight, smoke, soak, status, validate, watchdog
+from .ops import bench, cleanup_execute, cleanup_plan, daemon, doctor, doctor_fix, health, preflight, smoke, soak, status, validate, watchdog
 from .registry import add_registry, list_registry, remove_registry, show_registry, use_registry
 from .report import write_report
 from .report_store import list_reports, save_report, show_report
@@ -19,7 +19,7 @@ from . import __version__
 
 PRETTY = False
 
-MANIFEST_COMMANDS = {"validate", "preflight", "start", "wait", "stop", "status", "smoke", "soak", "bench", "doctor", "watchdog", "daemon", "report", "cleanup", "service"}
+MANIFEST_COMMANDS = {"validate", "preflight", "start", "wait", "stop", "status", "health", "smoke", "soak", "bench", "doctor", "watchdog", "daemon", "report", "cleanup", "service"}
 BENCH_PRESETS = {
     "tiny": [128],
     "small": [128, 512, 1024],
@@ -201,6 +201,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_stop = sub.add_parser("stop", help="Stop configured model server")
     p_stop.add_argument("--timeout", type=int, default=10, help="Grace period before SIGKILL")
     sub.add_parser("status", help="Print process/readiness status")
+    p_health = sub.add_parser("health", help="Run high-signal readiness, pid, swap, and optional smoke health checks")
+    p_health.add_argument("--max-swap-gib", type=float, default=None, help="Absolute swap ceiling; defaults to manifest preflight max_swap_gib")
+    p_health.add_argument("--max-swap-delta-gib", type=float, default=None, help="Maximum allowed swap growth across --sample-sec")
+    p_health.add_argument("--sample-sec", type=float, default=0.0, help="Seconds between swap samples; 0 takes back-to-back samples")
+    p_health.add_argument("--smoke", action="store_true", help="Run the manifest smoke test as part of health")
+    p_health.add_argument("--max-latency-sec", type=float, default=None, help="Maximum allowed smoke latency when --smoke is used")
     p_doctor = sub.add_parser("doctor", help="Run preflight, status, cleanup review, and stale-state diagnostics")
     p_doctor.add_argument("--fix", action="store_true", help="Apply safe local repairs such as stale PID removal and state-dir creation")
     p_report = sub.add_parser("report", help="Write a JSON or markdown model state report")
@@ -297,6 +303,8 @@ def main(argv: list[str] | None = None) -> int:
             emit(stop(manifest, timeout_sec=args.timeout)); return 0
         if args.command == "status":
             emit(status(manifest)); return 0
+        if args.command == "health":
+            result = health(manifest, max_swap_gib=args.max_swap_gib, max_swap_delta_gib=args.max_swap_delta_gib, sample_sec=args.sample_sec, include_smoke=args.smoke, max_latency_sec=args.max_latency_sec); emit(result); return 0 if result.get("ok") else 2
         if args.command == "doctor":
             result = doctor_fix(manifest) if args.fix else doctor(manifest); emit(result); return 0 if result.get("ok") else 2
         if args.command == "report":

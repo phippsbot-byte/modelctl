@@ -175,6 +175,18 @@ class ModelCtlTests(unittest.TestCase):
             self.assertEqual(watchdog.returncode, 0, watchdog.stderr + watchdog.stdout)
             watchdog_body = json.loads(watchdog.stdout)
             self.assertTrue(watchdog_body["ok"], watchdog_body)
+            health = subprocess.run(cmd + ["health", "--max-swap-gib", "999999", "--max-swap-delta-gib", "999999", "--sample-sec", "0", "--smoke", "--max-latency-sec", "10"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(health.returncode, 0, health.stderr + health.stdout)
+            health_body = json.loads(health.stdout)
+            self.assertTrue(health_body["ok"], health_body)
+            self.assertEqual(health_body["status"], "ok")
+            self.assertEqual(health_body["checks"]["readiness"]["status"], "ok")
+            self.assertEqual(health_body["checks"]["smoke"]["status"], "ok")
+            slow_health = subprocess.run(cmd + ["health", "--smoke", "--max-latency-sec", "0.000001"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(slow_health.returncode, 2, slow_health.stderr + slow_health.stdout)
+            slow_body = json.loads(slow_health.stdout)
+            self.assertEqual(slow_body["status"], "warn")
+            self.assertIn("smoke_latency", slow_body["warnings"])
             daemon = subprocess.run(cmd + ["daemon", "--iterations", "1", "--interval", "0", "--max-swap-gib", "999999"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(daemon.returncode, 0, daemon.stderr + daemon.stdout)
             daemon_body = json.loads(daemon.stdout)
@@ -210,6 +222,31 @@ class ModelCtlTests(unittest.TestCase):
             self.assertEqual(load_manifest(ingested).model_id, "fake-model")
             stop = subprocess.run(cmd + ["stop"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(stop.returncode, 0, stop.stderr + stop.stdout)
+
+    def test_health_smoke_down_endpoint_returns_structured_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            port = free_port()
+            manifest_path = self.write_manifest(root, f'''
+                [model]
+                id = "down"
+                model_id = "down-model"
+                endpoint = "http://127.0.0.1:{port}/v1"
+
+                [smoke]
+                prompt = "Reply pong."
+                expect = "pong"
+                timeout_sec = 1
+            ''')
+            result = subprocess.run([sys.executable, "-m", "modelctl.cli", "-m", str(manifest_path), "health", "--smoke"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+            self.assertFalse(result.stderr.strip(), result.stderr)
+            body = json.loads(result.stdout)
+            self.assertEqual(body["status"], "critical")
+            self.assertIn("readiness", body["issues"])
+            self.assertIn("smoke", body["issues"])
+            self.assertIn("error", body["checks"]["smoke"])
+
     def test_registry_list_command(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -223,29 +260,31 @@ class ModelCtlTests(unittest.TestCase):
             ''')
             source = registry / "registered.toml"
             manifest_path.rename(source)
+            env = os.environ.copy()
+            env["XDG_CONFIG_HOME"] = str(root / "xdg-config")
             cmd = [sys.executable, "-m", "modelctl.cli", "list", "--registry", str(registry)]
-            result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            result = subprocess.run(cmd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             body = json.loads(result.stdout)
             self.assertEqual(body["count"], 1)
             self.assertEqual(body["entries"][0]["id"], "registered")
             managed = root / "managed"
-            add = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "add", "--source", str(source), "--name", "managed-model", "--registry", str(managed)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            add = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "add", "--source", str(source), "--name", "managed-model", "--registry", str(managed)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(add.returncode, 0, add.stderr + add.stdout)
-            show = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "show", "managed-model", "--registry", str(managed), "--content"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            show = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "show", "managed-model", "--registry", str(managed), "--content"], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(show.returncode, 0, show.stderr + show.stdout)
             show_body = json.loads(show.stdout)
             self.assertTrue(show_body["ok"], show_body)
             self.assertIn("content", show_body["entry"])
             used = root / "used.toml"
-            use = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "use", "managed-model", "--registry", str(managed), "--output", str(used)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            use = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "use", "managed-model", "--registry", str(managed), "--output", str(used)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(use.returncode, 0, use.stderr + use.stdout)
             use_body = json.loads(use.stdout)
             self.assertTrue(use_body["ok"], use_body)
             self.assertEqual(load_manifest(used).model_id, "registered-model")
-            duplicate = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "add", "--source", str(source), "--name", "managed-model", "--registry", str(managed)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            duplicate = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "add", "--source", str(source), "--name", "managed-model", "--registry", str(managed)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(duplicate.returncode, 2, duplicate.stderr + duplicate.stdout)
-            rm = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "remove", "managed-model", "--registry", str(managed)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            rm = subprocess.run([sys.executable, "-m", "modelctl.cli", "registry", "remove", "managed-model", "--registry", str(managed)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             self.assertEqual(rm.returncode, 0, rm.stderr + rm.stdout)
             self.assertFalse((managed / "managed-model.toml").exists())
     def test_doctor_fix_and_pretty_output(self):

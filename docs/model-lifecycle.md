@@ -48,6 +48,7 @@ modelctl -m modelctl.toml report --format md --output report.md
 modelctl -m modelctl.toml reports save --format json
 modelctl reports list
 modelctl -m modelctl.toml doctor --fix
+modelctl -m modelctl.toml health --max-swap-delta-gib 1 --sample-sec 5
 modelctl -m modelctl.toml daemon --iterations 1 --max-swap-gib 4
 modelctl -m modelctl.toml service install --restart --max-swap-gib 4 --interval 30 --dry-run
 modelctl -m modelctl.toml service install --restart --max-swap-gib 4 --interval 30 --overwrite
@@ -55,6 +56,20 @@ modelctl -m modelctl.toml service start
 modelctl -m modelctl.toml service status
 modelctl -m modelctl.toml watchdog --max-swap-gib 4 --duration 0
 modelctl -m modelctl.toml status
+```
+
+## Health checks
+
+`modelctl health` is the cheap green/red operator check. By default it checks PID state, readiness, and the manifest's swap ceiling. For huge local lanes where macOS may retain stale swap, use delta sampling instead of pretending absolute swap tells the whole story:
+
+```bash
+modelctl -m modelctl.toml health --max-swap-delta-gib 1 --sample-sec 5
+```
+
+Add `--smoke` when you want endpoint behavior included, and `--max-latency-sec` when slow exact-output responses should fail the gate:
+
+```bash
+modelctl -m modelctl.toml health --smoke --max-latency-sec 30 --max-swap-delta-gib 1 --sample-sec 5
 ```
 
 ## macOS service wrapper

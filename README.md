@@ -8,7 +8,7 @@ It is built for messy real local inference work: `llama.cpp`, MLX/oMLX, custom m
 
 ```bash
 python3.11 -m pip install \
-  https://github.com/phippsbot-byte/modelctl/releases/download/v0.10.0/local_modelctl-0.10.0-py3-none-any.whl
+  https://github.com/phippsbot-byte/modelctl/releases/download/v0.11.0/local_modelctl-0.11.0-py3-none-any.whl
 ```
 
 For local development:
@@ -59,6 +59,7 @@ modelctl report --format md --output report.md
 modelctl reports save --format json
 modelctl reports list
 modelctl doctor --fix
+modelctl health --max-swap-delta-gib 1 --sample-sec 5
 modelctl daemon --iterations 1 --max-swap-gib 4
 modelctl service install --restart --max-swap-gib 4 --interval 30 --dry-run
 modelctl service install --restart --max-swap-gib 4 --interval 30 --overwrite
@@ -132,6 +133,7 @@ safe = true
 - `start --wait` — start server in its own process group, write PID state, optionally wait for readiness.
 - `wait` — wait for readiness URL/model string.
 - `status` — print PID/readiness/log/swap state.
+- `health [--max-swap-delta-gib N] [--smoke]` — one high-signal health verdict for PID, readiness, swap ceiling/delta, and optional smoke latency.
 - `doctor --fix` — run diagnostics and apply safe local repairs like stale PID-state removal and state-dir creation.
 - `report --format md --output report.md` — write JSON/Markdown model state reports.
 - `reports save/list/show` — keep/query saved report history under the modelctl state directory.

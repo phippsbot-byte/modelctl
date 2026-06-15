@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.0
+
+- Add `modelctl health` for a single PID/readiness/swap health verdict.
+- Add swap delta sampling via `--max-swap-delta-gib` and `--sample-sec` so huge local lanes are not judged only by stale absolute swap.
+- Add optional `--smoke` and `--max-latency-sec` checks for live endpoint behavior without forcing every health probe to spend tokens.
+- Isolate registry tests from the user's real `~/.config/modelctl/models` registry.
+
 ## v0.10.0
 
 - Add `modelctl service install` for macOS LaunchAgent plist generation around `modelctl daemon`.

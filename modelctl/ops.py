@@ -55,6 +55,101 @@ def status(manifest: ModelManifest) -> dict[str, Any]:
     return result
 
 
+def _rounded(value: float | None, digits: int = 3) -> float | None:
+    return None if value is None else round(value, digits)
+
+
+def health(
+    manifest: ModelManifest,
+    *,
+    max_swap_gib: float | None = None,
+    max_swap_delta_gib: float | None = None,
+    sample_sec: float = 0.0,
+    include_smoke: bool = False,
+    max_latency_sec: float | None = None,
+) -> dict[str, Any]:
+    checks: dict[str, dict[str, Any]] = {}
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    def record(name: str, ok: bool, *, severity: str = "critical", **detail: Any) -> None:
+        nonlocal checks, issues, warnings
+        checks[name] = {**detail, "status": "ok" if ok else severity, "ok": ok}
+        if not ok:
+            if severity == "warn":
+                warnings.append(name)
+            else:
+                issues.append(name)
+
+    pid = active_pid(manifest)
+    if manifest.start is not None:
+        record("pid", pid is not None, pid=pid, pid_path=str(default_pid_path(manifest)))
+    else:
+        record("pid", True, severity="warn", pid=pid, message="manifest has no [start] section")
+
+    try:
+        ready = readiness_check(manifest, timeout=5)
+        record("readiness", bool(ready.get("ready")), **ready)
+    except Exception as exc:
+        record("readiness", False, error=f"{type(exc).__name__}: {exc}")
+
+    ceiling = max_swap_gib if max_swap_gib is not None else manifest.preflight.max_swap_gib
+    swap_before = swap_used_gib()
+    swap_after = swap_before
+    if sample_sec > 0:
+        time.sleep(sample_sec)
+        swap_after = swap_used_gib()
+    elif max_swap_delta_gib is not None:
+        swap_after = swap_used_gib()
+    swap_delta = None if swap_before is None or swap_after is None else swap_after - swap_before
+    swap_detail = {
+        "used_gib": _rounded(swap_after),
+        "before_gib": _rounded(swap_before),
+        "after_gib": _rounded(swap_after),
+        "delta_gib": _rounded(swap_delta),
+        "max_swap_gib": ceiling,
+        "max_swap_delta_gib": max_swap_delta_gib,
+        "sample_sec": sample_sec,
+    }
+    swap_ok = True
+    if ceiling is not None and swap_after is not None and swap_after > ceiling:
+        swap_ok = False
+        swap_detail["breach"] = "absolute"
+    if max_swap_delta_gib is not None and swap_delta is not None and swap_delta > max_swap_delta_gib:
+        swap_ok = False
+        swap_detail["breach"] = "delta" if swap_detail.get("breach") is None else "absolute_and_delta"
+    record("swap", swap_ok, **swap_detail)
+
+    if include_smoke:
+        t0 = time.time()
+        try:
+            result = smoke(manifest)
+            elapsed = time.time() - t0
+            smoke_ok = bool(result.get("ok"))
+            detail = {"elapsed_s": round(elapsed, 3), "result": {k: v for k, v in result.items() if k != "raw"}}
+            record("smoke", smoke_ok, **detail)
+            if max_latency_sec is not None and elapsed > max_latency_sec:
+                checks["smoke_latency"] = {"status": "warn", "ok": False, "elapsed_s": round(elapsed, 3), "max_latency_sec": max_latency_sec}
+                warnings.append("smoke_latency")
+        except Exception as exc:
+            elapsed = time.time() - t0
+            record("smoke", False, elapsed_s=round(elapsed, 3), error=f"{type(exc).__name__}: {exc}")
+    else:
+        checks["smoke"] = {"status": "skipped", "ok": None}
+
+    status_name = "critical" if issues else "warn" if warnings else "ok"
+    return {
+        "ok": status_name == "ok",
+        "status": status_name,
+        "id": manifest.id,
+        "model_id": manifest.model_id,
+        "endpoint": manifest.endpoint,
+        "issues": issues,
+        "warnings": warnings,
+        "checks": checks,
+    }
+
+
 def smoke(manifest: ModelManifest, prompt: str | None = None, expect: str | None = None, max_tokens: int | None = None, temperature: float | None = None) -> dict[str, Any]:
     prompt = prompt if prompt is not None else manifest.smoke.prompt
     expect = expect if expect is not None else manifest.smoke.expect
