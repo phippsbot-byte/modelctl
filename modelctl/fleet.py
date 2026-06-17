@@ -7,7 +7,7 @@ from typing import Any
 from .manifest import ManifestError, load_manifest
 from .ops import health
 from .registry import list_registry
-from .runner import active_pid, default_log_path, default_pid_path, readiness_check, read_pid_state
+from .runner import active_pid, default_log_path, default_pid_path, readiness_check, read_pid_state, start as start_model
 from .service import default_label, service_plist_path
 from .system import swap_used_gib
 
@@ -168,5 +168,142 @@ def fleet_health(
         "count": len(rows),
         "registry_dirs": listing.get("registry_dirs", []),
         "statuses": dict(sorted(counts.items())),
+        "models": rows,
+    }
+
+
+def _readiness_or_error(manifest, timeout: float) -> tuple[bool, dict[str, Any]]:
+    try:
+        readiness = readiness_check(manifest, timeout=max(1, int(timeout)))
+        return bool(readiness.get("ready")), readiness
+    except Exception as exc:
+        return False, {"ready": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def fleet_recover(
+    *,
+    registries: list[str] | None = None,
+    limit: int | None = None,
+    readiness_timeout: float = 1.0,
+    execute: bool = False,
+    wait: bool = False,
+) -> dict[str, Any]:
+    """Plan or execute safe recovery for down registered model manifests.
+
+    Recovery is intentionally narrow: start manifests that are down and have a
+    [start] section. It does not restart already-ready models or mutate invalid
+    registry entries. Dry-run is the default; callers must pass execute=True for
+    side effects.
+    """
+    listing = list_registry(registries)
+    if execute and not wait:
+        return {
+            "ok": False,
+            "status": "invalid_request",
+            "executed": False,
+            "wait": wait,
+            "error": "--execute requires --wait so recovery is readiness-verified",
+            "issues": ["execute_requires_wait"],
+            "count": 0,
+            "registry_dirs": listing.get("registry_dirs", []),
+            "planned": {},
+            "models": [],
+        }
+    entries = listing.get("entries", [])
+    if limit is not None:
+        entries = entries[: max(0, limit)]
+
+    rows: list[dict[str, Any]] = []
+    failures: list[str] = []
+    for entry in entries:
+        row = _base_row(entry)
+        if not entry.get("ok"):
+            rows.append({
+                **row,
+                "ok": False,
+                "valid": False,
+                "planned_action": "skip",
+                "reason": "manifest_invalid",
+                "error": entry.get("error"),
+                "action": {"type": "skip", "reason": "manifest_invalid"},
+            })
+            continue
+        try:
+            manifest = load_manifest(Path(str(entry["path"])))
+            before_ready, before_readiness = _readiness_or_error(manifest, readiness_timeout)
+            base = {
+                **row,
+                "ok": True,
+                "valid": True,
+                "pid": active_pid(manifest),
+                "before": before_readiness,
+                "has_start": manifest.start is not None,
+            }
+            if before_ready:
+                rows.append({
+                    **base,
+                    "state": "ready",
+                    "planned_action": "none",
+                    "reason": "already_ready",
+                    "action": {"type": "none", "reason": "already_ready"},
+                })
+                continue
+            if manifest.start is None:
+                rows.append({
+                    **base,
+                    "state": "down",
+                    "planned_action": "skip",
+                    "reason": "no_start_section",
+                    "action": {"type": "skip", "reason": "no_start_section"},
+                })
+                continue
+
+            if not execute:
+                rows.append({
+                    **base,
+                    "state": "down",
+                    "planned_action": "start",
+                    "reason": "not_ready",
+                    "action": {"type": "dry_run", "would": "start", "wait": wait},
+                })
+                continue
+
+            result = start_model(manifest, wait=wait)
+            after_ready, after_readiness = _readiness_or_error(manifest, readiness_timeout)
+            action_ok = bool(result.get("already_running") or result.get("started"))
+            if wait:
+                result_readiness = result.get("readiness")
+                readiness = result_readiness if isinstance(result_readiness, dict) else after_readiness
+                action_ok = action_ok and bool(readiness.get("ready"))
+            if not action_ok:
+                failures.append(str(entry.get("id") or entry.get("name") or entry.get("path")))
+            rows.append({
+                **base,
+                "state": "ready" if after_ready else "down",
+                "planned_action": "start",
+                "reason": "not_ready",
+                "action": {"type": "start", "ok": action_ok, "result": result},
+                "after": after_readiness,
+                "pid_after": active_pid(manifest),
+            })
+        except ManifestError as exc:
+            ident = str(entry.get("id") or entry.get("name") or entry.get("path"))
+            failures.append(ident)
+            rows.append({**row, "ok": False, "valid": False, "planned_action": "skip", "reason": "manifest_invalid", "error": str(exc), "action": {"type": "skip", "reason": "manifest_invalid"}})
+        except Exception as exc:
+            ident = str(entry.get("id") or entry.get("name") or entry.get("path"))
+            failures.append(ident)
+            rows.append({**row, "ok": False, "valid": True, "planned_action": "error", "reason": "recover_exception", "error": f"{type(exc).__name__}: {exc}", "action": {"type": "error"}})
+
+    planned = Counter(str(row.get("planned_action") or "unknown") for row in rows)
+    return {
+        "ok": not failures,
+        "status": "ok" if not failures else "critical",
+        "executed": execute,
+        "wait": wait,
+        "count": len(rows),
+        "registry_dirs": listing.get("registry_dirs", []),
+        "planned": dict(sorted(planned.items())),
+        "issues": failures,
         "models": rows,
     }

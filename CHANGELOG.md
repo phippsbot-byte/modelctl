@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.16.0
+
+- Add `modelctl fleet recover` to plan or execute safe starts for registered manifests that are down and have a `[start]` section.
+- Fleet recovery is dry-run by default; `--execute --wait` is required for real recovery with readiness verification.
+- Make bare `python -m unittest` run the real test suite instead of silently reporting zero tests.
+
 ## v0.15.0
 
 - Add `modelctl service diff` to compare the installed LaunchAgent plist with desired manifest/service options.

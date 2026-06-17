@@ -5,7 +5,7 @@ import json
 import sys
 
 from .bench_artifacts import write_bench_artifact
-from .fleet import fleet_health, fleet_status
+from .fleet import fleet_health, fleet_recover, fleet_status
 from .init import init_manifest
 from .ingest import ingest
 from .manifest import ManifestError, load_manifest
@@ -135,6 +135,12 @@ def add_fleet_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_health.add_argument("--smoke", action="store_true", help="Run each manifest smoke test as part of health")
     p_health.add_argument("--max-latency-sec", type=float, default=None, help="Maximum allowed smoke latency when --smoke is used")
     p_health.add_argument("--limit", type=int, default=None, help="Limit number of registry entries checked")
+    p_recover = fleet.add_parser("recover", help="Plan or execute safe recovery for down registered models")
+    p_recover.add_argument("--registry", action="append", default=[], help="Extra registry directory to scan; can be repeated")
+    p_recover.add_argument("--limit", type=int, default=None, help="Limit number of registry entries checked")
+    p_recover.add_argument("--readiness-timeout", type=float, default=1.0, help="Per-model readiness timeout seconds")
+    p_recover.add_argument("--execute", action="store_true", help="Actually start recoverable down manifests; requires --wait; dry-run by default")
+    p_recover.add_argument("--wait", action="store_true", help="Wait for readiness after starting each model")
 
 
 def add_mlx_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -327,6 +333,8 @@ def main(argv: list[str] | None = None) -> int:
                 result = fleet_status(registries=args.registry, limit=args.limit, readiness_timeout=args.readiness_timeout); emit(result); return 0
             if args.fleet_command == "health":
                 result = fleet_health(registries=args.registry, max_swap_gib=args.max_swap_gib, max_swap_delta_gib=args.max_swap_delta_gib, sample_sec=args.sample_sec, include_smoke=args.smoke, max_latency_sec=args.max_latency_sec, limit=args.limit); emit(result); return 0 if result.get("ok") else 2
+            if args.fleet_command == "recover":
+                result = fleet_recover(registries=args.registry, limit=args.limit, readiness_timeout=args.readiness_timeout, execute=args.execute, wait=args.wait); emit(result); return 0 if result.get("ok") else 2
         if args.command == "mlx":
             if args.mlx_command == "discover":
                 result = discover_mlx_models(root=args.root, limit=args.limit); emit(result); return 0 if result.get("ok") else 2

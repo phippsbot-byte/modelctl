@@ -49,6 +49,8 @@ modelctl -m modelctl.toml reports save --format json
 modelctl reports list
 modelctl fleet status
 modelctl fleet health --max-swap-delta-gib 1 --sample-sec 5
+modelctl fleet recover             # dry-run recovery plan
+modelctl fleet recover --execute --wait
 modelctl -m modelctl.toml doctor --fix
 modelctl -m modelctl.toml health --max-swap-delta-gib 1 --sample-sec 5
 modelctl -m modelctl.toml daemon --health-mode --iterations 1 --max-swap-gib 48 --max-swap-delta-gib 1 --sample-sec 5
@@ -92,6 +94,15 @@ modelctl fleet health --max-swap-delta-gib 1 --sample-sec 5
 ```
 
 It scans `$MODELCTL_REGISTRY` plus `~/.config/modelctl/models`, runs the same structured `health` verdict for each manifest, and exits non-zero if any lane is critical/invalid or if no registered lanes are found. Add `--smoke` only when you want to spend real endpoint calls across the fleet.
+
+When the fleet is down and you want a controlled recovery path, dry-run first:
+
+```bash
+modelctl fleet recover
+modelctl fleet recover --execute --wait
+```
+
+`fleet recover` only starts registered manifests that are down and have a `[start]` section. It skips already-ready, invalid, and inspect-only manifests. No side effects happen unless `--execute` is passed; add `--wait` when startup should verify readiness before returning green.
 
 ## macOS service wrapper
 

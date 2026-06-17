@@ -428,6 +428,93 @@ class ModelCtlTests(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=5)
 
+    def test_fleet_recover_dry_run_and_execute_starts_down_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            registry = root / "registry"
+            registry.mkdir()
+            port = free_port()
+            server = root / "recover_server.py"
+            server.write_text(textwrap.dedent(r'''
+                import json, sys
+                from http.server import BaseHTTPRequestHandler, HTTPServer
+                port = int(sys.argv[1])
+                class H(BaseHTTPRequestHandler):
+                    def log_message(self, *args):
+                        pass
+                    def _send(self, body, status=200):
+                        data=json.dumps(body).encode()
+                        self.send_response(status)
+                        self.send_header('Content-Type','application/json')
+                        self.send_header('Content-Length',str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                    def do_GET(self):
+                        if self.path == '/v1/models':
+                            self._send({'object':'list','data':[{'id':'recover-model'}]})
+                        else:
+                            self._send({'error':'not found'}, 404)
+                    def do_POST(self):
+                        self._send({'choices':[{'message':{'content':'pong'},'finish_reason':'stop'}]})
+                HTTPServer(('127.0.0.1', port), H).serve_forever()
+            '''), encoding="utf-8")
+            (registry / "recover.toml").write_text(textwrap.dedent(f'''
+                [model]
+                id = "recover"
+                model_id = "recover-model"
+                endpoint = "http://127.0.0.1:{port}/v1"
+
+                [start]
+                command = ["{sys.executable}", "{server}", "{port}"]
+                cwd = "{root}"
+                log_path = "{root / 'recover.log'}"
+                pid_path = "{root / 'recover.pid.json'}"
+                startup_timeout_sec = 20
+                readiness_url = "http://127.0.0.1:{port}/v1/models"
+                readiness_contains = "recover-model"
+            '''), encoding="utf-8")
+            (registry / "nostart.toml").write_text(textwrap.dedent(f'''
+                [model]
+                id = "nostart"
+                model_id = "nostart-model"
+                endpoint = "http://127.0.0.1:{free_port()}/v1"
+            '''), encoding="utf-8")
+            env = os.environ.copy()
+            env["XDG_CONFIG_HOME"] = str(root / "xdg-config")
+            env.pop("MODELCTL_REGISTRY", None)
+            cmd = [sys.executable, "-m", "modelctl.cli", "fleet", "recover", "--registry", str(registry), "--readiness-timeout", "1"]
+
+            dry = subprocess.run(cmd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(dry.returncode, 0, dry.stderr + dry.stdout)
+            dry_body = json.loads(dry.stdout)
+            self.assertTrue(dry_body["ok"], dry_body)
+            self.assertFalse(dry_body["executed"], dry_body)
+            dry_rows = {row["id"]: row for row in dry_body["models"] if row.get("id")}
+            self.assertEqual(dry_rows["recover"]["planned_action"], "start")
+            self.assertEqual(dry_rows["recover"]["action"]["type"], "dry_run")
+            self.assertEqual(dry_rows["nostart"]["planned_action"], "skip")
+            self.assertFalse((root / "recover.pid.json").exists(), "dry-run must not start processes")
+
+            no_wait = subprocess.run(cmd + ["--execute"], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(no_wait.returncode, 2, no_wait.stderr + no_wait.stdout)
+            no_wait_body = json.loads(no_wait.stdout)
+            self.assertEqual(no_wait_body["status"], "invalid_request")
+            self.assertIn("execute_requires_wait", no_wait_body["issues"])
+            self.assertFalse((root / "recover.pid.json").exists(), "execute without wait must not start processes")
+
+            executed = subprocess.run(cmd + ["--execute", "--wait"], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(executed.returncode, 0, executed.stderr + executed.stdout)
+            executed_body = json.loads(executed.stdout)
+            self.assertTrue(executed_body["ok"], executed_body)
+            self.assertTrue(executed_body["executed"], executed_body)
+            rows = {row["id"]: row for row in executed_body["models"] if row.get("id")}
+            self.assertEqual(rows["recover"]["action"]["type"], "start")
+            self.assertTrue(rows["recover"]["action"]["result"].get("started"), rows["recover"])
+            self.assertTrue(rows["recover"]["after"].get("ready"), rows["recover"])
+
+            stop = subprocess.run([sys.executable, "-m", "modelctl.cli", "-m", str(registry / "recover.toml"), "stop"], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            self.assertEqual(stop.returncode, 0, stop.stderr + stop.stdout)
+
     def test_doctor_fix_and_pretty_output(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
